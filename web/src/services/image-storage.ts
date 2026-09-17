@@ -1,3 +1,5 @@
+import { assertFileSize, cloudFileUrl, downloadCloudFile, uploadCloudFile } from "@/services/api/cloud-files";
+import { accountDatabaseName } from "@/lib/session-context";
 import localforage from "localforage";
 
 import { nanoid } from "nanoid";
@@ -14,10 +16,8 @@ export type UploadedImage = {
     mimeType: string;
 };
 
-const store = localforage.createInstance({ name: "infinite-canvas", storeName: "image_files" });
-const previewStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_previews" });
-const imageLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
-const videoLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
+const store = localforage.createInstance({ name: accountDatabaseName(), storeName: "image_files" });
+const previewStore = localforage.createInstance({ name: accountDatabaseName(), storeName: "image_previews" });
 const objectUrls = new Map<string, string>();
 const previewUrls = new Map<string, string>();
 const previewListeners = new Set<() => void>();
@@ -44,12 +44,13 @@ export async function uploadImage(input: string | Blob, options?: ImageReadOptio
         if (options?.signal?.aborted || isNamedError(error, IMAGE_RESPONSE_ERROR) || isNamedError(error, IMAGE_TIMEOUT_ERROR) || !/^https?:\/\//i.test(input)) throw error;
         const meta = await loadImageMeta(input, options, IMAGE_REMOTE_LOAD_TIMEOUT_MS);
         if (!meta) throw error;
-        return { url: input, width: meta.width, height: meta.height, bytes: 0, mimeType: "" };
+        throw new Error("外链图片无法下载，尚未保存到云端。请通过本地代理或上传文件重试。");
     }
     return storeImage(blob, options);
 }
 
 async function storeImage(blob: Blob, options?: ImageReadOptions): Promise<UploadedImage> {
+    assertFileSize(blob);
     const storageKey = `image:${nanoid()}`;
     const url = URL.createObjectURL(blob);
     try {
@@ -57,6 +58,7 @@ async function storeImage(blob: Blob, options?: ImageReadOptions): Promise<Uploa
         if (!meta) throw new Error(i18n.t("common.imageReadFailed"));
         throwIfAborted(options?.signal);
         await store.setItem(storageKey, blob);
+        await uploadCloudFile(storageKey, blob);
         throwIfAborted(options?.signal);
         objectUrls.set(storageKey, url);
         await storeImagePreview(storageKey, blob);
@@ -145,14 +147,18 @@ export async function resolveImageUrl(storageKey?: string, fallback = "") {
     const cached = objectUrls.get(storageKey);
     if (cached) return cached;
     const blob = await store.getItem<Blob>(storageKey);
-    if (!blob) return fallback;
+    if (!blob) return cloudFileUrl(storageKey);
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
     return url;
 }
 
 export async function getImageBlob(storageKey: string) {
-    return store.getItem<Blob>(storageKey);
+    const cached = await store.getItem<Blob>(storageKey);
+    if (cached) return cached;
+    const blob = await downloadCloudFile(storageKey);
+    await store.setItem(storageKey, blob);
+    return blob;
 }
 
 // 缩略图按图片的 storageKey 另存一份 WebP，只放在本地 IndexedDB 里，不写进节点数据，也不参与导出和 WebDAV 同步。
@@ -214,7 +220,9 @@ async function deleteImagePreview(storageKey: string) {
 }
 
 export async function setImageBlob(storageKey: string, blob: Blob) {
+    assertFileSize(blob);
     await store.setItem(storageKey, blob);
+    await uploadCloudFile(storageKey, blob);
     await deleteImagePreview(storageKey);
     await storeImagePreview(storageKey, blob);
     const url = URL.createObjectURL(blob);
@@ -240,25 +248,8 @@ export async function deleteStoredImages(keys: Iterable<string>) {
     );
 }
 
-export async function cleanupUnusedImages(usedData: unknown) {
-    const usedKeys = collectImageStorageKeys(usedData);
-    await Promise.all([
-        imageLogStore.iterate((value) => {
-            collectImageStorageKeys(value, usedKeys);
-        }),
-        videoLogStore.iterate((value) => {
-            collectImageStorageKeys(value, usedKeys);
-        }),
-    ]);
-    const unused: string[] = [];
-    await store.iterate((_value, key) => {
-        if (!usedKeys.has(key)) unused.push(key);
-    });
-    const orphanPreviews: string[] = [];
-    await previewStore.iterate((_value, key) => {
-        if (!usedKeys.has(key)) orphanPreviews.push(key);
-    });
-    await Promise.all([deleteStoredImages(unused), ...orphanPreviews.map(deleteImagePreview)]);
+export async function cleanupUnusedImages(_usedData: unknown) {
+    // Remote ownership and references cannot be inferred from this browser cache.
 }
 
 export function collectImageStorageKeys(value: unknown, keys = new Set<string>()) {

@@ -6,7 +6,6 @@
 
 <p align="center">
   <a href="https://linux.do/"><img src="https://img.shields.io/badge/Linux.do-Community-2b6de8?style=flat-square" alt="Linux.do"></a>
-  <a href="https://render.com/deploy?repo=https://github.com/basketikun/infinite-canvas"><img src="https://img.shields.io/badge/Render-Deploy-46e3b7?style=flat-square&logo=render&logoColor=111111" alt="Deploy to Render"></a>
   <a href="https://github.com/basketikun/infinite-canvas"><img src="https://img.shields.io/github/stars/basketikun/infinite-canvas?style=flat-square&logo=github" alt="GitHub stars"></a>
   <a href="https://github.com/basketikun/infinite-canvas/tags"><img src="https://img.shields.io/github/v/tag/basketikun/infinite-canvas?style=flat-square&label=version" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-f97316?style=flat-square" alt="License"></a>
@@ -99,31 +98,15 @@
 
 ## 快速开始
 
-AI API Key、Base URL、画布、素材和生成记录默认保存在浏览器本地。
-
-### 本地开发
+本版本必须登录，账号由管理员创建。画布、素材和生成记录保存到 PostgreSQL 与私有 S3；AI 配置和密钥只保存在当前设备，浏览器直连 AI 接口。
 
 ```bash
-git clone git@github.com:basketikun/infinite-canvas.git
-cd infinite-canvas
-cd web
-bun install
-bun run dev
+cp .env.example .env
+# 填写数据库密码、认证密钥、站点地址及已有 S3 服务配置
+docker compose up -d --build
 ```
 
-### Docker 运行
-
-```bash
-git clone git@github.com:basketikun/infinite-canvas.git
-cd infinite-canvas
-docker compose up -d
-```
-
-运行后默认端口3000，可访问 `http://localhost:3000`。
-
-首次打开后进入右上角配置，填入自己的 OpenAI 兼容 `Base URL` 和 `API Key`。
-
-如果默认的OpenAI接口调用方式与您的API不同，可自定义生图/视频脚本调用。
+默认访问 `http://localhost:3000`。首次使用前按 [服务端部署说明](server/README.md) 创建管理员，登录后配置个人 AI 接口。该文档包含本地开发、S3 CORS、备份、文件清理和验证说明。新版本不自动迁移或清空旧浏览器数据；WebDAV 入口已隐藏。
 
 ## 效果展示
 

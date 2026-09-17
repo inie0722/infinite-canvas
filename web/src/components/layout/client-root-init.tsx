@@ -1,3 +1,4 @@
+import { takeCredentials } from "@/lib/session-context";
 import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
 import { App } from "antd";
@@ -17,16 +18,10 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         if (handledConfigParams.current) return;
-        const searchParams = new URLSearchParams(window.location.search);
-        const baseUrl = searchParams.get("baseUrl") || searchParams.get("baseurl");
-        const apiKey = searchParams.get("apiKey") || searchParams.get("apikey");
-        if (!baseUrl && !apiKey) return;
+        const credentials = takeCredentials();
+        if (!credentials) return;
         handledConfigParams.current = true;
-        searchParams.delete("baseUrl");
-        searchParams.delete("baseurl");
-        searchParams.delete("apiKey");
-        searchParams.delete("apikey");
-        window.history.replaceState(null, "", `${window.location.pathname}${searchParams.size ? `?${searchParams}` : ""}${window.location.hash}`);
+        const { baseUrl, apiKey } = credentials;
         const result = importChannelCredentials({ baseUrl, apiKey });
         openConfigDialog(false, "channels");
         if (result.status === "created") message.success(t("config.importedChannelCreated", { name: result.channelName }));

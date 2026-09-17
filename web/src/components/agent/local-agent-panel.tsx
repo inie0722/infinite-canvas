@@ -1,3 +1,4 @@
+import { accountStorage, scopedKey } from "@/lib/session-context";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { App, Button, Tooltip } from "antd";
@@ -341,8 +342,8 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
 
     useEffect(() => {
         if (!clientReady || !enabled || !token.trim()) return;
-        localStorage.setItem("canvas-agent-url", endpoint);
-        localStorage.setItem("canvas-agent-token", token);
+        accountStorage.setItem("canvas-agent-url", endpoint);
+        accountStorage.setItem("canvas-agent-token", token);
         const clientId = clientIdRef.current;
         let disposed = false;
         let protocolRejected = false;
@@ -606,8 +607,8 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             const savedEffort = useAgentStore.getState().reasoningEffort;
             const efforts = current.supportedReasoningEfforts.map((item) => item.reasoningEffort);
             const nextEffort = efforts.includes(savedEffort as AgentReasoningEffort) ? savedEffort as AgentReasoningEffort : current.defaultReasoningEffort || efforts[0];
-            localStorage.setItem("canvas-agent-model", current.model);
-            localStorage.setItem("canvas-agent-reasoning-effort", nextEffort);
+            accountStorage.setItem("canvas-agent-model", current.model);
+            accountStorage.setItem("canvas-agent-reasoning-effort", nextEffort);
             setAgentState({ models, model: current.model, reasoningEffort: nextEffort });
         }).catch((error) => addEventLog(rt("modelListFailed"), error));
     }, [connected, endpoint, setAgentState, token]);
@@ -890,7 +891,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
 
     const changePermissionMode = (nextMode: AgentPermissionMode) => {
         const apply = () => {
-            localStorage.setItem("canvas-agent-permission-mode", nextMode);
+            accountStorage.setItem("canvas-agent-permission-mode", nextMode);
             setAgentState({ permissionMode: nextMode });
         };
         if (nextMode !== "full") return apply();
@@ -1427,12 +1428,12 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                             const selected = models.find((item) => item.model === model);
                             if (!selected) return;
                             const effort = selected.defaultReasoningEffort || selected.supportedReasoningEfforts[0]?.reasoningEffort;
-                            localStorage.setItem("canvas-agent-model", model);
-                            if (effort) localStorage.setItem("canvas-agent-reasoning-effort", effort);
+                            accountStorage.setItem("canvas-agent-model", model);
+                            if (effort) accountStorage.setItem("canvas-agent-reasoning-effort", effort);
                             setAgentState({ model, ...(effort ? { reasoningEffort: effort } : {}) });
                         }}
                         onReasoningEffortChange={(reasoningEffort) => {
-                            localStorage.setItem("canvas-agent-reasoning-effort", reasoningEffort);
+                            accountStorage.setItem("canvas-agent-reasoning-effort", reasoningEffort);
                             setAgentState({ reasoningEffort });
                         }}
                         left={
@@ -1485,7 +1486,7 @@ function acquireAgentClientId() {
 
 function readAgentClientId() {
     try {
-        return sessionStorage.getItem("canvas-agent-client-id") || "";
+        return sessionStorage.getItem(scopedKey("canvas-agent-client-id")) || "";
     } catch {
         return "";
     }
@@ -1493,7 +1494,7 @@ function readAgentClientId() {
 
 function saveAgentClientId(clientId: string) {
     try {
-        sessionStorage.setItem("canvas-agent-client-id", clientId);
+        sessionStorage.setItem(scopedKey("canvas-agent-client-id"), clientId);
     } catch {
         // The in-memory identity still keeps request ownership consistent within the current page session.
     }

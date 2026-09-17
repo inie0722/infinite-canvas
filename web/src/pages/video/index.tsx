@@ -1,3 +1,5 @@
+import { cloudLogStore } from "@/services/api/generation-logs";
+import { accountDatabaseName } from "@/lib/session-context";
 import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, LoaderCircle, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Tag, Typography } from "antd";
@@ -13,7 +15,7 @@ import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeVa
 import { canvasThemes } from "@/lib/canvas-theme";
 import { clampVideoSeconds } from "@/lib/media-size";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
-import { deleteStoredMedia, resolveMediaUrl } from "@/services/file-storage";
+import { getMediaBlob, resolveMediaUrl } from "@/services/file-storage";
 import { resolveImageUrl, ensureImagePreview, getImagePreviewRevision, previewUrlFor, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -43,6 +45,7 @@ type GenerationResult = {
 
 type GenerationLog = {
     id: string;
+    revision?: number;
     createdAt: number;
     title: string;
     prompt: string;
@@ -65,7 +68,7 @@ type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vqu
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
 const LOG_STORE_KEY = "infinite-canvas:video_generation_logs";
-const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
+const logStore = cloudLogStore("video");
 
 export default function VideoPage() {
     const { message } = App.useApp();
@@ -112,7 +115,7 @@ export default function VideoPage() {
     }, [running, startedAt]);
 
     useEffect(() => {
-        void refreshLogs();
+        void refreshLogs().catch((error) => message.error((error as Error).message));
     }, []);
 
     const addReferences = async (files?: FileList | null) => {
@@ -238,12 +241,18 @@ export default function VideoPage() {
         void generate();
     };
 
-    const downloadVideo = (video: GeneratedVideo) => {
-        saveAs(video.url, "video.mp4");
+    const downloadVideo = async (video: GeneratedVideo) => {
+        try { saveAs(video.storageKey ? await getMediaBlob(video.storageKey) : video.url, "video.mp4"); }
+        catch (error) { message.error((error as Error).message); }
     };
 
-    const saveResultToAssets = (video: GeneratedVideo) => {
-        addAsset({
+    const saveResultToAssets = async (video: GeneratedVideo) => {
+        if (!video.storageKey) {
+            const archived = await storeGeneratedVideo({ url: video.url });
+            if (!archived.storageKey) { message.warning("视频仍未归档，请检查外链访问或上传本地文件"); return; }
+            video = { ...video, ...archived };
+        }
+        await addAsset({
             kind: "video",
             title: t("videoWorkbench.resultTitle"),
             coverUrl: "",
@@ -275,12 +284,9 @@ export default function VideoPage() {
         setPreviewLog(null);
     };
 
-    const deleteSelectedLogs = () => {
-        const mediaKeys = logs
-            .filter((log) => selectedLogIds.includes(log.id))
-            .map((log) => log.video?.storageKey)
-            .filter((key): key is string => Boolean(key));
-        void Promise.all([deleteStoredMedia(mediaKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(() => refreshLogs());
+    const deleteSelectedLogs = async () => {
+        await Promise.all(selectedLogIds.map((id) => logStore.removeItem(id)));
+        await refreshLogs();
         if (previewLog && selectedLogIds.includes(previewLog.id)) {
             setPreviewLog(null);
             setResults([]);
@@ -290,8 +296,10 @@ export default function VideoPage() {
     };
 
     const saveLog = async (log: GenerationLog, resumePending = true) => {
-        await logStore.setItem(log.id, serializeLog(log));
-        await refreshLogs(resumePending);
+        try {
+            log.revision = (await logStore.setItem(log.id, serializeLog(log))).revision;
+            await refreshLogs(resumePending);
+        } catch (error) { message.error(`结果已保留，云端保存失败：${(error as Error).message}`); }
     };
 
     const refreshLogs = async (resumePending = true) => {
@@ -309,6 +317,8 @@ export default function VideoPage() {
 
     const pollGenerationLog = async (log: GenerationLog, configOverride?: AiConfig, agentTaskId?: string) => {
         if (!log.task || activeLogIdsRef.current.has(log.id)) return;
+        const resumeConfig = buildVideoConfig({ ...effectiveConfig, ...log.config }, log.task.model || log.model);
+        if (!isAiConfigReady(configOverride || resumeConfig, log.task.model || log.model)) { message.info("请先在当前设备配置对应的 AI 接口，再继续查询视频任务"); return; }
         activeLogIdsRef.current.add(log.id);
         setRunning(true);
         setStartedAt((value) => value || performance.now());
@@ -536,6 +546,7 @@ function ResultVideoCard({ video, onDownload, onSaveAsset }: { video: GeneratedV
                     <span>
                         {video.width}x{video.height}
                     </span>
+                    {!video.storageKey ? <span>未归档 · 仅外链</span> : null}
                     <span>{formatBytes(video.bytes)}</span>
                     <span>{formatDuration(video.durationMs)}</span>
                 </div>
@@ -666,8 +677,8 @@ async function readStoredLogs() {
             logs.push(value);
         });
         return (await Promise.all(logs.map(normalizeLog))).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    } catch {
-        return [];
+    } catch (error) {
+        throw error;
     }
 }
 
@@ -682,6 +693,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
     const config = normalizeLogConfig(log);
     return {
         id: log.id || nanoid(),
+        revision: log.revision,
         createdAt: log.createdAt || Date.now(),
         title: log.title || log.model || i18n.t("workbench.untitled"),
         prompt: log.prompt || "",

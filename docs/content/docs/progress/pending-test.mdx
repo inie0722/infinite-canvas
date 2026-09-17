@@ -5,6 +5,20 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+## 多用户与 S3 云端改造
+
+- 两个普通账号与管理员分别验证画布、素材、图片/视频生成记录及文件接口隔离；伪造 owner、storageKey、旧账号请求头和导入包不得访问其他用户内容。管理员只能管理账号。
+- 验证管理员创建账号、邮箱密码登录、修改密码、停用/恢复、重置密码撤销旧会话；公开注册关闭。检查 HttpOnly、HTTPS Secure、固定 7 天会话及第 6 次登录请求限流提示。
+- 两台设备恢复同账号数据；详情按需加载；画布重命名保留节点。双端同时保存产生 409，并可保留草稿、重新加载或另存副本。
+- 断网或 S3 故障后结果留在当前账号本地，手动重试不重新调用 AI；服务端确认前不显示已保存。检查连续编辑、保存迟到响应、IndexedDB 配额不足与关闭页面提示。
+- 图片、视频、音频、生成结果与导入文件：上传、播放、下载、AI 参考、完整文件导出及重新分配标识导入；覆盖 100 MiB 超限、签名地址过期、重复完成、旧上传地址不能覆盖最终文件、无法下载外链显示未归档。
+- 删除素材不破坏其他画布或记录引用。清理命令先预览；S3 删除中断可重跑，不能重新引用 deleting 文件。清理前确认客户端未保存草稿不再需要待删文件。
+- 多标签页退出、换账号、会话到期：断开本地 Agent，清空内存；AI 配置、草稿、媒体缓存及插件私有数据不串号。Agent 历史仍在个人本机，不上传。
+- 换设备缺少 AI 配置时补充配置，视频待完成任务暂停续查且不误标失败。WebDAV 入口隐藏；旧浏览器数据未迁移、未清空。
+- 配置 Docker/PostgreSQL/真实私有 S3，验证 CORS、HTTPS、数据库迁移、管理员初始化、数据卷重启恢复及 PostgreSQL + S3 联合备份恢复。Docker 静态资源路径仍需实际验收。
+- 已通过 22 个针对性测试（12 个后端、10 个客户端），使用 PGlite、真实 Better Auth 与模拟 S3，覆盖权限、归属、版本、上传及前端草稿流程；未代替真实 S3、Docker 或浏览器验收。遵照项目约定未执行语法检查和构建。
+
+
 The current release needs manual verification in these areas:
 
 - Canvas image previews: canvas image nodes, the left element list, the node reference bar, my-assets cards, the asset picker, image workbench result cards and history thumbnails, and the image/video workbench reference strips all render from a preview capped at a 768px long edge, so image-heavy views no longer decode the originals. Previews live locally only: canvas data, asset data, generation history, exported zips, and WebDAV sync must never contain preview content, and previews should be cleaned up when an image is deleted or no longer used. Opening the full-size image, editing, downloading, exporting, and generation references must keep using the original; an image that is already at or under 768px, exists only as a remote URL, or uses a custom cover should fall back to the original.

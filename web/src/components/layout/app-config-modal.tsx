@@ -323,7 +323,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                         label: t("config.tabs.localStorage"),
                         children: <ConfigLocalStorage active={activeTab === "local-storage"} />,
                     },
-                ]}
+                ].filter((item) => item.key !== "webdav")}
             />
             {showDoneButton ? (
                 <div className="mt-4 flex justify-end">

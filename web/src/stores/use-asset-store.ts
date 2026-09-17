@@ -1,10 +1,9 @@
 import { create } from "zustand";
-import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
-
 import { nanoid } from "nanoid";
-import { localForageStorage } from "@/lib/localforage-storage";
-import { cleanupUnusedImages, ensureImagePreview, previewUrlFor, resolveImageUrl, uploadImage } from "@/services/image-storage";
-import { cleanupUnusedMedia, resolveMediaUrl } from "@/services/file-storage";
+import { ensureImagePreview, previewUrlFor, resolveImageUrl, uploadImage } from "@/services/image-storage";
+import { resolveMediaUrl } from "@/services/file-storage";
+import { api } from "@/services/api/client";
+import { saveEntity } from "@/services/api/cloud-data";
 
 export type AssetKind = "text" | "image" | "video";
 export type TextAsset = AssetBase<"text"> & { data: { content: string } };
@@ -14,6 +13,8 @@ export type Asset = TextAsset | ImageAsset | VideoAsset;
 
 type AssetBase<T extends AssetKind> = {
     id: string;
+    revision?: number;
+    cover?: { storageKey: string };
     kind: T;
     title: string;
     coverUrl: string;
@@ -28,87 +29,56 @@ type AssetBase<T extends AssetKind> = {
 type AssetStore = {
     hydrated: boolean;
     assets: Asset[];
-    addAsset: (asset: Omit<Asset, "id" | "createdAt" | "updatedAt">) => string;
-    updateAsset: (id: string, patch: Partial<Omit<Asset, "id" | "createdAt">>) => void;
-    removeAsset: (id: string) => void;
+    loadAssets: () => Promise<void>;
+    addAsset: (asset: Omit<Asset, "id" | "createdAt" | "updatedAt">) => Promise<string>;
+    updateAsset: (id: string, patch: Partial<Omit<Asset, "id" | "createdAt">>) => Promise<void>;
+    removeAsset: (id: string) => Promise<void>;
     replaceAssets: (assets: Asset[]) => void;
     cleanupImages: (extra?: unknown) => void;
 };
-
-// 卡片用缩略图渲染，自定义封面（远程地址或单独上传的封面）保持原样。
 export function assetCoverUrl(asset: Asset) {
     const own = asset.kind === "image" ? asset.data.dataUrl : "";
     const cover = asset.coverUrl || own;
     return asset.kind === "image" && cover === own ? previewUrlFor(asset.data.storageKey) || cover : cover;
 }
-
-const ASSET_STORE_KEY = "infinite-canvas:asset_store";
-
-const assetStorage: PersistStorage<AssetStore> = {
-    getItem: async (name) => {
-        const value = await localForageStorage.getItem(name);
-        if (!value) return null;
-        const parsed = JSON.parse(value) as StorageValue<AssetStore>;
-        parsed.state.assets = await Promise.all(
-            parsed.state.assets.map(async (asset) => {
-                if (asset.kind === "video" && asset.data.storageKey) return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } };
-                if (asset.kind !== "image") return asset;
-                if (asset.data.storageKey) {
-                    void ensureImagePreview(asset.data.storageKey);
-                    return {
-                        ...asset,
-                        coverUrl: asset.coverUrl.startsWith("blob:") ? await resolveImageUrl(asset.data.storageKey, asset.coverUrl) : asset.coverUrl,
-                        data: { ...asset.data, dataUrl: await resolveImageUrl(asset.data.storageKey, asset.data.dataUrl) },
-                    };
-                }
-                if (!asset.data.dataUrl.startsWith("data:image/")) return asset;
-                const image = await uploadImage(asset.data.dataUrl);
-                return { ...asset, coverUrl: asset.coverUrl.startsWith("data:image/") ? image.url : asset.coverUrl, data: { ...asset.data, dataUrl: image.url, storageKey: image.storageKey, bytes: image.bytes, mimeType: image.mimeType } };
-            }),
-        );
-        return parsed;
+async function hydrateAsset(asset: Asset): Promise<Asset> {
+    if (asset.cover?.storageKey) asset = { ...asset, coverUrl: await resolveImageUrl(asset.cover.storageKey) };
+    if (asset.kind === "video") return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } };
+    if (asset.kind !== "image") return asset;
+    const url = await resolveImageUrl(asset.data.storageKey, asset.data.dataUrl);
+    void ensureImagePreview(asset.data.storageKey);
+    return { ...asset, coverUrl: asset.coverUrl || url, data: { ...asset.data, dataUrl: url } };
+}
+async function prepareCover(asset: Asset): Promise<Asset> {
+    if (asset.coverUrl.startsWith("data:")) {
+        const image = await uploadImage(asset.coverUrl);
+        return { ...asset, cover: { storageKey: image.storageKey! }, coverUrl: "" };
+    }
+    return asset;
+}
+export const useAssetStore = create<AssetStore>((set, get) => ({
+    hydrated: false, assets: [],
+    loadAssets: async () => set({ assets: await Promise.all((await api<Asset[]>("/assets")).map(hydrateAsset)), hydrated: true }),
+    addAsset: async (input) => {
+        const now = new Date().toISOString();
+        const asset = await prepareCover({ ...input, id: nanoid(), revision: undefined, createdAt: now, updatedAt: now } as Asset);
+        const saved = await hydrateAsset(await saveEntity("assets", asset));
+        set((state) => ({ assets: [saved, ...state.assets] }));
+        return saved.id;
     },
-    setItem: (name, value) => localForageStorage.setItem(name, JSON.stringify(value)),
-    removeItem: (name) => localForageStorage.removeItem(name),
-};
-
-export const useAssetStore = create<AssetStore>()(
-    persist(
-        (set, get) => ({
-            hydrated: false,
-            assets: [],
-            addAsset: (asset) => {
-                const now = new Date().toISOString();
-                const id = nanoid();
-                set((state) => ({ assets: [{ ...asset, id, createdAt: now, updatedAt: now } as Asset, ...state.assets] }));
-                return id;
-            },
-            updateAsset: (id, patch) =>
-                set((state) => ({
-                    assets: state.assets.map((asset) => (asset.id === id ? ({ ...asset, ...patch, updatedAt: new Date().toISOString() } as Asset) : asset)),
-                })),
-            removeAsset: (id) =>
-                set((state) => {
-                    const assets = state.assets.filter((asset) => asset.id !== id);
-                    get().cleanupImages({ assets });
-                    return { assets };
-                }),
-            replaceAssets: (assets) => set({ assets }),
-            cleanupImages: (extra) => {
-                window.setTimeout(async () => {
-                    const { useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
-                    await cleanupUnusedImages({ assets: get().assets, projects: useCanvasStore.getState().projects, extra });
-                    await cleanupUnusedMedia({ assets: get().assets, projects: useCanvasStore.getState().projects, extra });
-                }, 0);
-            },
-        }),
-        {
-            name: ASSET_STORE_KEY,
-            storage: assetStorage,
-            partialize: (state) => ({ assets: state.assets }) as StorageValue<AssetStore>["state"],
-            onRehydrateStorage: () => () => {
-                useAssetStore.setState({ hydrated: true });
-            },
-        },
-    ),
-);
+    updateAsset: async (id, patch) => {
+        const previous = get().assets.find((item) => item.id === id);
+        if (!previous) return;
+        const asset = await prepareCover({ ...previous, ...patch, ...(patch.coverUrl !== undefined && patch.coverUrl !== previous.coverUrl ? { cover: undefined } : {}), id, updatedAt: new Date().toISOString() } as Asset);
+        const saved = await hydrateAsset(await saveEntity("assets", asset));
+        set((state) => ({ assets: state.assets.map((item) => item.id === id ? saved : item) }));
+    },
+    removeAsset: async (id) => {
+        const asset = get().assets.find((item) => item.id === id);
+        if (asset) await saveEntity("assets", asset, true);
+        set((state) => ({ assets: state.assets.filter((item) => item.id !== id) }));
+    },
+    replaceAssets: (assets) => set({ assets }),
+    // Cloud references span devices. Physical cleanup is an explicit server maintenance command.
+    cleanupImages: () => {},
+}));

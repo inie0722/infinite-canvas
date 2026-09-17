@@ -1,0 +1,35 @@
+{
+  "name": "infinite-canvas-server",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/migrate.ts",
+    "admin:create": "tsx src/create-admin.ts",
+    "files:cleanup": "tsx src/cleanup.ts",
+    "test": "node --import tsx tests/api.test.ts && TSX_TSCONFIG_PATH=../web/tsconfig.json node --import tsx tests/cloud-client.test.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@aws-sdk/s3-request-presigner": "^3.0.0",
+    "@hono/node-server": "^1.19.0",
+    "better-auth": "^1.5.0",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.9.0",
+    "pg": "^8.16.0",
+    "tsx": "^4.20.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.15.0",
+    "drizzle-kit": "^0.31.0",
+    "fake-indexeddb": "^6.2.5"
+  }
+}

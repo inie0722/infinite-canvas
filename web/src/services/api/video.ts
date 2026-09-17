@@ -140,6 +140,7 @@ export async function storeGeneratedVideo(result: VideoGenerationResult): Promis
         try {
             return await uploadMediaFile(result.url, "video");
         } catch {
+            window.dispatchEvent(new CustomEvent("cloud-error", { detail: "视频外链无法下载，未归档。已保留播放地址，可下载后上传，或稍后重试添加到素材。" }));
             return { url: result.url, storageKey: "", bytes: 0, mimeType: result.mimeType || "video/mp4" };
         }
     }

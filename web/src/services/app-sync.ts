@@ -1,3 +1,4 @@
+import { accountDatabaseName } from "@/lib/session-context";
 import localforage from "localforage";
 
 import i18n from "@/i18n";
@@ -76,8 +77,8 @@ export type AppSyncProgressEvent = {
 export type AppSyncProgress = (event: AppSyncProgressEvent) => void;
 
 const FILE_CONCURRENCY = 3;
-const imageLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
-const videoLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
+const imageLogStore = localforage.createInstance({ name: accountDatabaseName(), storeName: "image_generation_logs" });
+const videoLogStore = localforage.createInstance({ name: accountDatabaseName(), storeName: "video_generation_logs" });
 type LogStore = typeof imageLogStore;
 const storageKeyPattern = /^(image|video|audio|file|video-reference|audio-reference):/;
 
